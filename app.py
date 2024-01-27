@@ -1,158 +1,169 @@
-import re
+import streamlit as st #
 import os
-import glob
-from io import BytesIO
-from typing import Tuple, List
-from langchain.docstore.document import Document
+from langchain.chains import RetrievalQA
+from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
+from langchain.callbacks.manager import CallbackManager
+from langchain.llms import Ollama
+
+# from langchain.embeddings.ollama import OllamaEmbeddings
+from langchain.vectorstores import Chroma
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from pypdf import PdfReader
-from langchain_community.embeddings import HuggingFaceInstructEmbeddings
+from langchain.document_loaders import PyPDFLoader
+from langchain.prompts import PromptTemplate
+from langchain.memory import ConversationBufferMemory
 from langchain.embeddings.huggingface import HuggingFaceEmbeddings
 
+#This is the fastest of the PDF parsing options, and contains detailed metadata about the PDF and its pages, as well as returns one document per page.
+#from langchain_community.document_loaders import PyMuPDFLoader
 
 
+# RAG prompt
+from langchain import hub
 
-index_name="k8s-books"
-
-def clean_text(text: str) -> str:
-    """
-    Cleans the extracted text from a PDF page.
-    Args:
-        text (str): The extracted text.
-    Returns:
-        str: The cleaned text.
-    """
-    text = re.sub(r"(\w+)-\n(\w+)", r"\1\2", text)
-    text = re.sub(r"(?<!\n\s)\n(?!\s\n)", " ", text.strip())
-    text = re.sub(r"\n\s*\n", "\n\n", text)
-    return text
+# prompt = hub.pull("rlm/rag-prompt")
+# prompt = hub.pull("rlm/rag-prompt-llama")
+prompt = hub.pull("rlm/rag-prompt-mistral")
 
 
-def parse_pdf(file: BytesIO, filename: str) -> Tuple[List[str], str]:
-    """
-    Parses a PDF file and extracts cleaned text from each page.
-    Args:
-        file (BytesIO): The PDF file as a binary stream.
-        filename (str): The name of the PDF file.
-    Returns:
-        Tuple[List[str], str]: A tuple containing a list of strings (one per page) and the filename.
-    """
-    try:
-        pdf = PdfReader(file)
-    except Exception as e:
-        # Handle exceptions related to file reading
-        raise ValueError(f"Error reading PDF file: {e}")
-
-    output = []
-    for page in pdf.pages:
-        try:
-            text = page.extract_text()
-            if text:
-                cleaned_text = clean_text(text)
-                output.append(cleaned_text)
-        except Exception as e:
-            # Handle or log exceptions related to text extraction
-            print(f"Error extracting text from page: {e}")
-
-    return output, filename
+#Embedding Size
+# 'thenlper/gte-base': 768,
+# 'thenlper/gte-large': 1024,
+# 'BAAI/bge-large-en': 1024,
+# 'text-embedding-ada-002': 1536,
+# 'gte-large-fine-tuned': 1024
 
 
-def text_to_docs(text: List[str], filename: str) -> List[Document]:
-    if isinstance(text, str):
-        text = [text]
-    page_docs = [Document(page_content=page) for page in text]
-    for i, doc in enumerate(page_docs):
-        doc.metadata["page"] = i + 1
+#model_path = "sentence-transformers/all-MiniLM-L6-v2"
+#model_path = "sentence-transformers/all-MiniLM-L12-v2"
+#model_path = "BAAI/bge-large-en-v1.5"
+model_path = "BAAI/llm-embedder" # Load model automatically use GPUs
 
-    doc_chunks = []
-    for doc in page_docs:
-        text_splitter = RecursiveCharacterTextSplitter(
-            # chunk_size=4000,
-            chunk_size=500,
-            separators=["\n\n", "\n", ".", "!", "?", ",", " ", ""],
-            chunk_overlap=100,
-        )
-        chunks = text_splitter.split_text(doc.page_content)
-        for i, chunk in enumerate(chunks):
-            doc = Document(
-                page_content=chunk, metadata={"page": doc.metadata["page"], "chunk": i} #metadata hdp
+
+vectorstore_directory = "vectorstore_data"
+file_directory = "files"
+# llmmodel="solar:10.7b"
+# llmmodel="openchat:7b-v3.5"
+# llmmodel="dolphin-mixtral:8x7b"
+# llmmodel="starling-lm"
+llmmodel = "mistral:latest"
+
+# Ensure the vectorstore directory exists
+if not os.path.exists(vectorstore_directory):
+    os.makedirs(vectorstore_directory)
+
+if not os.path.exists(file_directory):
+    os.makedirs(file_directory)
+
+# if "template" not in st.session_state:
+#     #st.session_state.template = """ Your tone should be professional and informative. Answer the question based only on the following context:
+#     st.session_state.template = """ You are an assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question. If you don't know the answer, just say that you don't know. Use as much sentences to provide the best and concise the answer.
+#     Context: {context}
+#     History: {history}
+
+#     User: {question}
+#     Chatbot:"""
+
+# if "prompt" not in st.session_state:
+#     st.session_state.prompt = PromptTemplate(
+#         input_variables=["history", "context", "question"],
+#         template=st.session_state.template,
+#     )
+
+if "memory" not in st.session_state:
+    st.session_state.memory = ConversationBufferMemory(
+        memory_key="history", return_messages=True, input_key="question"
+    )
+
+if "vectorstore" not in st.session_state:
+    st.session_state.vectorstore = Chroma(
+        persist_directory=vectorstore_directory,
+        embedding_function=HuggingFaceEmbeddings(
+            model_name=model_path, model_kwargs={"device": "cpu"}, # comma added
+            encode_kwargs = {"normalize_embeddings": True} #added
+        ),
+    )
+
+if "llm" not in st.session_state:
+    st.session_state.llm = Ollama(
+        base_url="http://localhost:11434",
+        model=llmmodel,
+        verbose=True,
+        callback_manager=CallbackManager([StreamingStdOutCallbackHandler()]),
+    )
+
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+st.title("PDF Chatbot")
+
+
+uploaded_file = st.file_uploader("Upload your PDF", type="pdf")
+
+for message in st.session_state.chat_history:
+    with st.chat_message(message["role"]):
+        st.markdown(message["message"])
+
+if uploaded_file is not None:
+    # # Create the complete file path
+    file_path = os.path.join(file_directory, uploaded_file.name)
+    if not os.path.isfile(file_path):
+        with st.spinner("Saving your document..."):
+            bytes_data = uploaded_file.read()
+            with open(file_path, "wb") as f:
+                f.write(bytes_data)
+
+        with st.spinner("Analyzing your document..."):
+            loader = PyPDFLoader(file_path)
+            data = loader.load()
+
+            text_splitter = RecursiveCharacterTextSplitter(
+                # 1500
+                chunk_size=1024,
+                chunk_overlap=100,
+                length_function=len,
             )
-            doc.metadata["source"] = f"{doc.metadata['page']}-{doc.metadata['chunk']}" #aqui las paginas
-            doc.metadata["filename"] = filename  # aqui el nombre de archivo
-            doc_chunks.append(doc)
-    return doc_chunks
+            all_splits = text_splitter.split_documents(data)
 
+            progress_bar = st.progress(0)
+            for i, doc in enumerate(all_splits):
+                st.session_state.vectorstore = Chroma.from_documents(
+                    documents=[doc],
+                    embedding=HuggingFaceEmbeddings(model_name=model_path),
+                    persist_directory=vectorstore_directory,
+                )
+                st.session_state.vectorstore.persist()
+                progress_bar.progress((i + 1) / len(all_splits))
 
+            progress_bar.empty()
 
-########expe
-def docs_to_index_experimental(docs, vectorstore_directory):
-    #model_name = "BAAI/bge-large-en-v1.5"
-    model_name = "hkunlp/instructor-large"
-    model_kwargs = {"device": "mps"}
-    encode_kwargs = {"normalize_embeddings": True}
-    embed_instruction = "Represent the text from the Kubernetes documentation"
-    query_instruction = "Query the most relevant text from the Kubernetes documentation"
-    # Create embeddings using HuggingFaceEmbeddings with a specific Sentence Transformers model ##HuggingFaceInstructEmbeddings
-    embeddings = HuggingFaceInstructEmbeddings(
-    model_name=model_name,
-    model_kwargs=model_kwargs,
-    encode_kwargs=encode_kwargs,
-    embed_instruction=embed_instruction,
-    query_instruction=query_instruction
-    )
-    # Create a FAISS vector store with the documents and embeddings
-    index = FAISS.from_documents(docs, embeddings)
-    # Save the FAISS vector store to the specified local path
-    index.save_local(vectorstore_directory,index_name)
-    return index
-########Expe
+    st.session_state.retriever = st.session_state.vectorstore.as_retriever()
 
-
-
-
-def get_index_for_pdf(pdf_files, pdf_names, vectorstore_directory):
-    documents = []
-    for pdf_file, pdf_name in zip(pdf_files, pdf_names):
-        text, filename = parse_pdf(BytesIO(pdf_file), pdf_name)
-        documents = documents + text_to_docs(text, filename)
-    index = docs_to_index_experimental(documents, vectorstore_directory)
-    return index
-
-
-
-
-def pretty_print_docs(docs):
-    print(
-        f"\n{'-' * 100}\n".join(
-            [f"Document {i+1}:\n\n" + d.page_content for i, d in enumerate(docs)]
+    if "qa_chain" not in st.session_state:
+        st.session_state.qa_chain = RetrievalQA.from_chain_type(
+            llm=st.session_state.llm,
+            chain_type="stuff",
+            retriever=st.session_state.retriever,
+            verbose=True,
+            chain_type_kwargs={
+                "verbose": True,
+                # "prompt": st.session_state.prompt,#prompt state
+                "prompt": prompt,  # promtp RAG
+                "memory": st.session_state.memory,
+            },
         )
-    )
 
+    if user_input := st.chat_input("You:", key="user_input"):
+        user_message = {"role": "user", "message": user_input}
+        st.session_state.chat_history.append(user_message)
+        with st.chat_message("user"):
+            st.markdown(user_input)
 
-def main():
-    # Define the directory where your PDF files are stored
-    pdf_directory = "./data"
-    
-    # Define the directory where the vector store will be saved
-    vectorstore_directory = "./vectorstore/lab/"
-
-    # List all PDF files in the directory
-    pdf_paths = glob.glob(os.path.join(pdf_directory, "*.pdf"))
-
-    # Read PDF files into memory and create corresponding names
-    pdf_files = []
-    pdf_names = []
-    for pdf_path in pdf_paths:
-        with open(pdf_path, "rb") as file:
-            pdf_files.append(file.read())
-            pdf_names.append(os.path.basename(pdf_path))
-
-    # Call the function with the PDF files, names, and vector store directory
-    index = get_index_for_pdf(pdf_files, pdf_names, vectorstore_directory)
-
-    # [Any additional code you want to execute after this point]
-
-if __name__ == "__main__":
-    main()
+        with st.chat_message("assistant"):
+            with st.spinner("Assistant is typing..."):
+                response = st.session_state.qa_chain(user_input)
+            st.markdown(response["result"])
+        chatbot_message = {"role": "assistant", "message": response["result"]}
+        st.session_state.chat_history.append(chatbot_message)
+else:
+    st.write("Please upload a PDF file.")
 
