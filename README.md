@@ -10,6 +10,9 @@ OllamaPaperBot es una aplicación desarrollada en Streamlit que utiliza la bibli
 - Almacenamiento y recuperación de información mediante `Chroma`.
 
 ## Instalación
+
+### Para poder utilizar el chatbot es necesaria la instalacion de Ollama
+
 Para instalar y ejecutar OllamaPaperBot, siga estos pasos:
 1. Clonar el repositorio.
 2. Instalar las dependencias usando `pip install -r requirements.txt`.
