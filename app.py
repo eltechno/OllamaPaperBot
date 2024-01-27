@@ -4,8 +4,6 @@ from langchain.chains import RetrievalQA
 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 from langchain.callbacks.manager import CallbackManager
 from langchain.llms import Ollama
-
-# from langchain.embeddings.ollama import OllamaEmbeddings
 from langchain.vectorstores import Chroma
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.document_loaders import PyPDFLoader
@@ -13,15 +11,10 @@ from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
 from langchain.embeddings.huggingface import HuggingFaceEmbeddings
 
-#This is the fastest of the PDF parsing options, and contains detailed metadata about the PDF and its pages, as well as returns one document per page.
-#from langchain_community.document_loaders import PyMuPDFLoader
-
 
 # RAG prompt
 from langchain import hub
 
-# prompt = hub.pull("rlm/rag-prompt")
-# prompt = hub.pull("rlm/rag-prompt-llama")
 prompt = hub.pull("rlm/rag-prompt-mistral")
 
 
@@ -33,18 +26,11 @@ prompt = hub.pull("rlm/rag-prompt-mistral")
 # 'gte-large-fine-tuned': 1024
 
 
-#model_path = "sentence-transformers/all-MiniLM-L6-v2"
-#model_path = "sentence-transformers/all-MiniLM-L12-v2"
-#model_path = "BAAI/bge-large-en-v1.5"
 model_path = "BAAI/llm-embedder" # Load model automatically use GPUs
 
 
 vectorstore_directory = "vectorstore_data"
 file_directory = "files"
-# llmmodel="solar:10.7b"
-# llmmodel="openchat:7b-v3.5"
-# llmmodel="dolphin-mixtral:8x7b"
-# llmmodel="starling-lm"
 llmmodel = "mistral:latest"
 
 # Ensure the vectorstore directory exists
@@ -53,21 +39,6 @@ if not os.path.exists(vectorstore_directory):
 
 if not os.path.exists(file_directory):
     os.makedirs(file_directory)
-
-# if "template" not in st.session_state:
-#     #st.session_state.template = """ Your tone should be professional and informative. Answer the question based only on the following context:
-#     st.session_state.template = """ You are an assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question. If you don't know the answer, just say that you don't know. Use as much sentences to provide the best and concise the answer.
-#     Context: {context}
-#     History: {history}
-
-#     User: {question}
-#     Chatbot:"""
-
-# if "prompt" not in st.session_state:
-#     st.session_state.prompt = PromptTemplate(
-#         input_variables=["history", "context", "question"],
-#         template=st.session_state.template,
-#     )
 
 if "memory" not in st.session_state:
     st.session_state.memory = ConversationBufferMemory(
@@ -146,7 +117,6 @@ if uploaded_file is not None:
             verbose=True,
             chain_type_kwargs={
                 "verbose": True,
-                # "prompt": st.session_state.prompt,#prompt state
                 "prompt": prompt,  # promtp RAG
                 "memory": st.session_state.memory,
             },
