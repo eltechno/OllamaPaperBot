@@ -23,7 +23,7 @@ Para instalar y ejecutar OllamaPaperBot, siga estos pasos:
 Las contribuciones son bienvenidas. Por favor, envíe sus pull requests o abra issues para discutir posibles mejoras.
 
 ## Licencia
-Este proyecto está bajo la licencia [especificar tipo de licencia].
+Este proyecto está bajo la licencia GPL 3.0.
 
 ## Contacto
 Para más información o soporte, por favor abra un issue en este repositorio de GitHub.
